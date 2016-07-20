@@ -65,6 +65,7 @@ class PickIlluminaIndicesCommand {
     public double MIN_DELTAG;
     public List<String> INDEX_ADAPTER;
     public List<String> AVOID_SEQUENCE;
+    public List<String> REQUIRED_INDEXES;
 
     final static Log log = Log.getInstance(PickIlluminaIndicesCommand.class);
 
@@ -80,12 +81,20 @@ class PickIlluminaIndicesCommand {
         private int _score;
         private byte _minEditDistance;
         private List<DnaFoldPrediction> folds = new ArrayList<>();
+        private final boolean required;
 
         Index(final byte[] sequence) {
+            this(sequence, false);
+        }
+
+        Index(final byte[] sequence, final boolean required) {
             this.sequence = sequence;
             this.related = new HashSet<>(defaultEdgeSetSize);
+            this.required = required;
             reset();
         }
+
+        boolean isRequired() { return this.required; }
 
         private void reset() { _score = Integer.MIN_VALUE; _minEditDistance = -1; }
 
@@ -183,6 +192,18 @@ class PickIlluminaIndicesCommand {
             super(comparator);
         }
 
+        @Override public Index first() {
+            final Iterator<Index> iter = this.iterator();
+            while (iter.hasNext()) {
+                final Index index = iter.next();
+                if (!index.isRequired()) {
+                    this.remove(index);
+                    return index;
+                }
+            }
+            return null;
+        }
+
         /**
          * Overridden to remove a Barcode and the "edit" all the related indices to remove their relationship
          * to this barcode and re-insert them into the Set to resort them.
@@ -229,12 +250,24 @@ class PickIlluminaIndicesCommand {
         List<Index> indexes = new LinkedList<>();
         log.info("Generated " + kmers.size() + " kmers.");
 
+        // Create a set of hashcodes for the required indexes.
+        final HashSet<Integer> requiredIndexes = new HashSet<>();
+        if (!REQUIRED_INDEXES.isEmpty()) {
+            for (final String kmerString : REQUIRED_INDEXES) {
+                requiredIndexes.add(Arrays.hashCode(kmerString.toUpperCase().getBytes()));
+            }
+        }
+
         this.defaultEdgeSetSize = guessAtNumberOfEdgesPerBarcode(INDEX_LENGTH, EDIT_DISTANCE);
         log.info("Guess at number of edges: " + this.defaultEdgeSetSize);
 
         // Remove any that violate the max homopolyer length and convert them into indices
         for (final byte[] kmer : kmers) {
-            if (lengthOfLongestHomopolymer(kmer) <= MAX_HOMOPOLYMER) {
+            final int kmerHashCode = Arrays.hashCode(kmer);
+            if (requiredIndexes.contains(kmerHashCode)) {
+                indexes.add(new Index(kmer, true));
+            }
+            else if (lengthOfLongestHomopolymer(kmer) <= MAX_HOMOPOLYMER) {
                 indexes.add(new Index(kmer));
             }
         }
@@ -269,17 +302,19 @@ class PickIlluminaIndicesCommand {
             final Iterator<Index> iterator = indexes.iterator();
             while (iterator.hasNext()) {
                 final Index index = iterator.next();
-                final String bases = StringUtil.bytesToString(index.sequence);
+                if (!index.isRequired()) {
+                    final String bases = StringUtil.bytesToString(index.sequence);
 
-                // Predict folding for each adapter that the index will be embedded in
-                for (final String adapter : this.INDEX_ADAPTER) {
-                    final String seq = adapter.replaceFirst("N+", bases);
-                    final DnaFoldPrediction prediction = predictor.predict(seq);
-                    index.folds.add(prediction);
+                    // Predict folding for each adapter that the index will be embedded in
+                    for (final String adapter : this.INDEX_ADAPTER) {
+                        final String seq = adapter.replaceFirst("N+", bases);
+                        final DnaFoldPrediction prediction = predictor.predict(seq);
+                        index.folds.add(prediction);
+                    }
+
+                    final double deltaG = index.folds.stream().mapToDouble(DnaFoldPrediction::deltaG).min().orElse(MIN_DELTAG);
+                    if (deltaG < MIN_DELTAG) iterator.remove();
                 }
-
-                final double deltaG = index.folds.stream().mapToDouble(DnaFoldPrediction::deltaG).min().orElse(MIN_DELTAG);
-                if (deltaG < MIN_DELTAG) iterator.remove();
             }
             log.info("Retained " + indexes.size() + " indices after removing indicies with too low deltaG.");
         }
@@ -303,6 +338,10 @@ class PickIlluminaIndicesCommand {
         int lastMinEdit = 0;
         int count = rankedIndexes.size();
         while (count > N_INDICES || lastMinEdit < EDIT_DISTANCE) {
+            if (requiredIndexes.size() == count) {
+                rankedIndexes.clear();
+                break;
+            }
             final Index first = rankedIndexes.first();
 
             if (first.minEditDistance() > lastMinEdit) {
@@ -374,8 +413,10 @@ class PickIlluminaIndicesCommand {
         final Iterator<Index> iterator = indexes.iterator();
         while (iterator.hasNext()) {
             final Index b = iterator.next();
-            final double gc = SequenceUtil.calculateGc(b.sequence);
-            if (gc < MIN_GC || gc > MAX_GC) iterator.remove();
+            if (!b.isRequired()) {
+                final double gc = SequenceUtil.calculateGc(b.sequence);
+                if (gc < MIN_GC || gc > MAX_GC) iterator.remove();
+            }
         }
     }
 
@@ -386,7 +427,7 @@ class PickIlluminaIndicesCommand {
     private void filterOutReverseComplements(final List<Index> indexes) {
         final LinkedHashSet<Index> tmp = new LinkedHashSet<>();
         for (final Index bc : indexes) {
-            if (!tmp.contains(bc.reverseComplement())) tmp.add(bc);
+            if (bc.isRequired() || !tmp.contains(bc.reverseComplement())) tmp.add(bc);
         }
         indexes.clear();
         indexes.addAll(tmp);
@@ -399,7 +440,7 @@ class PickIlluminaIndicesCommand {
     private void filterOutReverses(final List<Index> indexes) {
         final LinkedHashSet<Index> tmp = new LinkedHashSet<>();
         for (final Index bc : indexes) {
-            if (!tmp.contains(bc.reverse())) tmp.add(bc);
+            if (bc.isRequired() || !tmp.contains(bc.reverse())) tmp.add(bc);
         }
         indexes.clear();
         indexes.addAll(tmp);
@@ -418,9 +459,12 @@ class PickIlluminaIndicesCommand {
 
         final Iterator<Index> iterator = indexes.iterator();
         while (iterator.hasNext()) {
-            final String barcodeString = StringUtil.bytesToString(iterator.next().sequence);
-            if (avoidKmers.contains(barcodeString)) {
-                iterator.remove();
+            final Index index = iterator.next();
+            if (!index.isRequired()) {
+                final String barcodeString = StringUtil.bytesToString(index.sequence);
+                if (avoidKmers.contains(barcodeString)) {
+                    iterator.remove();
+                }
             }
         }
     }
@@ -430,10 +474,12 @@ class PickIlluminaIndicesCommand {
         final Iterator<Index> iterator = indexes.iterator();
         while (iterator.hasNext()) {
             final Index bc = iterator.next();
-            final byte[] rc = Arrays.copyOf(bc.sequence, bc.sequence.length);
-            SequenceUtil.reverseComplement(rc);
-            if (Arrays.equals(bc.sequence, rc)) {
-                iterator.remove();
+            if (!bc.isRequired()) {
+                final byte[] rc = Arrays.copyOf(bc.sequence, bc.sequence.length);
+                SequenceUtil.reverseComplement(rc);
+                if (Arrays.equals(bc.sequence, rc)) {
+                    iterator.remove();
+                }
             }
         }
     }
