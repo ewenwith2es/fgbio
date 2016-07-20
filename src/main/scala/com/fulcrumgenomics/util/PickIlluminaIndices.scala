@@ -30,7 +30,7 @@ class PickIlluminaIndices
   @arg(flag="t", doc="Number of threads to use.")                                      val threads: Int = 4,
   @arg(          doc="The installation directory for ViennaRNA.")                      val viennaRnaDir: Option[DirPath] = None,
   @arg(          doc="The lowest acceptable secondary structure deltaG.")              val minDeltaG: Double = -10,
-  @arg(          doc="A require list of indexes.")                                     val requiredIndexes: List[String] = Nil,
+  @arg(          doc="A require list of indexes.")                                     val requiredIndexes: Option[FilePath] = None,
   @arg(          doc="The indexed adapter sequence into which the indices will be integrated.")
   val adapters: Seq[String] = IlluminaAdapters.DualIndexed.both,
   @arg(          doc="Sequences that should be avoided.  Any kmer of 'length' that appears in these sequences and their " + "reverse complements will be thrown out.")
@@ -38,6 +38,9 @@ class PickIlluminaIndices
 ) extends FgBioTool{
 
   override def execute(): Unit = {
+    val required: Seq[String] = requiredIndexes.map { path => Io.readLines(path).toSeq }.getOrElse(Seq.empty)
+
+
     val cmd = new PickIlluminaIndicesCommand()
     cmd.INDEX_LENGTH              = length
     cmd.N_INDICES                 = indices
@@ -54,7 +57,7 @@ class PickIlluminaIndices
     cmd.MIN_DELTAG                = minDeltaG
     cmd.INDEX_ADAPTER             = adapters
     cmd.AVOID_SEQUENCE            = avoidSequence
-    cmd.REQUIRED_INDEXES          = requiredIndexes
+    cmd.REQUIRED_INDEXES          = required
     cmd.execute()
   }
 }
