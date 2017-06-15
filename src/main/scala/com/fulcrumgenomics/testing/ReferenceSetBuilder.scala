@@ -22,12 +22,11 @@
  * THE SOFTWARE.
  */
 
-package com.fulcrumgenomics.fasta
+package com.fulcrumgenomics.testing
 
 import java.nio.file.{Files, Path}
 
 import com.fulcrumgenomics.FgBioDef._
-import com.fulcrumgenomics.bam.api.SamWriter
 import com.fulcrumgenomics.commons.io.PathUtil
 import com.fulcrumgenomics.util.Io
 import htsjdk.samtools.{SAMFileHeader, SAMSequenceDictionary, SAMSequenceRecord, SAMTextHeaderCodec}

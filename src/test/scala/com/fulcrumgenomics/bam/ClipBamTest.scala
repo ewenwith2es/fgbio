@@ -25,9 +25,8 @@
 package com.fulcrumgenomics.bam
 
 import com.fulcrumgenomics.bam.api.{SamRecord, SamSource}
-import com.fulcrumgenomics.fasta.ReferenceSetBuilder
 import com.fulcrumgenomics.testing.SamBuilder._
-import com.fulcrumgenomics.testing.{SamBuilder, UnitSpec}
+import com.fulcrumgenomics.testing.{ReferenceSetBuilder, SamBuilder, UnitSpec}
 import htsjdk.samtools.reference.ReferenceSequenceFileFactory
 import htsjdk.samtools.util.SequenceUtil
 import htsjdk.samtools.SAMTag
